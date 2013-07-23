@@ -1458,6 +1458,17 @@ class S(PythonMixin):
                     (val['_type'], key, val))
         return facets
 
+    def to_queryset(self):
+        """
+        Returns a Django Queryset from the response from ES
+
+        Example:
+        >>> s = S().query(name__prefix='Jimmy')
+        >>> s.to_queryset()
+        [<Account: Jimmy John>]
+        """
+        return self.type.get_model().objects.filter(id__in=zip(*self.values_list('id'))[0])
+
 
 class MLT(PythonMixin):
     """Represents a lazy Elasticsearch More Like This API request.
