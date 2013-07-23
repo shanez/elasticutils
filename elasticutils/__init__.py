@@ -1703,6 +1703,9 @@ class ObjectSearchResults(SearchResults):
                 r)
             for r in results]
 
+    def to_queryset(self):
+        return self.type.get_model().objects.filter(id__in=map(lambda x: x.id, self.objects))
+
     def __iter__(self):
         return self.objects.__iter__()
 
