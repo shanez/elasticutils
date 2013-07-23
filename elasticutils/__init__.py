@@ -1467,7 +1467,11 @@ class S(PythonMixin):
         >>> s.to_queryset()
         [<Account: Jimmy John>]
         """
-        return self.type.get_model().objects.filter(id__in=zip(*self.values_list('id'))[0])
+        ids = zip(*self.values_list('id'))
+        if ids:
+            return self.type.get_model().objects.filter(id__in=ids[0])
+        else:
+            return self.type.get_model().objects.none()
 
 
 class MLT(PythonMixin):
