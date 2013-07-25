@@ -357,7 +357,7 @@ class ElasticSearchBuilder(object):
                 log.warn("Could not find %s for deletion" % (index,))
 
     @classmethod
-    def create_indexes(cls, settings_=None, make_aliases=True):
+    def create_indexes(cls, index_names=None, settings_=None, make_aliases=True):
         if not index_names:
             log.info('No index specified using ES_ALIAS_MAP')
             indexes = settings.ES_ALIAS_MAP
