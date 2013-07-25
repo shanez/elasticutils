@@ -21,7 +21,6 @@ class Command(BaseCommand):
     )
 
     def handle(self, *args, **options):
-        found = []
         update_all = True
         if options.get('indexes'):
             update_all = False
@@ -38,8 +37,7 @@ class Command(BaseCommand):
                 continue
             for item_name, item in inspect.getmembers(search_index_module, inspect.isclass):
                 if item and issubclass(item, (Indexable,)) and issubclass(item, (MappingType,)):
-                    if update_all or item.
-                    documents = [a for a in item.get_model().objects.all().values_list("id", flat=True)]
-                    index_objects(item, documents)
+                    if update_all or item.get_mapping_type_name() in options.get('indexes'):
+                        documents = [a for a in item.get_model().objects.all().values_list("id", flat=True)]
+                        index_objects(item, documents)
 
-        set(found) - set(options.get('index'))
