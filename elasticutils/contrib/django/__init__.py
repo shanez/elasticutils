@@ -1,22 +1,17 @@
 import logging
-import inspect
 from functools import wraps
 
 import pyelasticsearch
-from pyelasticsearch.exceptions import ElasticHttpNotFoundError
 
 from django.conf import settings
 from django.shortcuts import render
-from django.utils import importlib
 from django.utils.decorators import decorator_from_middleware_with_args
-from django.utils.module_loading import module_has_submodule
 
 from elasticutils import F, InvalidFieldActionError, MLT, NoModelError  # noqa
 from elasticutils import S as BaseS
 from elasticutils import get_es as base_get_es
 from elasticutils import Indexable as BaseIndexable
 from elasticutils import MappingType as BaseMappingType
-from elasticutils.contrib.django.tasks import index_objects
 
 
 log = logging.getLogger('elasticutils')
@@ -214,7 +209,6 @@ class MappingType(BaseMappingType):
     `get_model()`.
 
     """
-
     def get_object(self):
         """Returns the database object for this result
 
@@ -296,22 +290,6 @@ class Indexable(BaseIndexable):
     indexing power.
 
     """
-    override_index = None
-
-    @classmethod
-    def get_index(cls):
-        """Returns the index to use for this mapping type.
-
-        You can specify the index to use for this mapping type.  This
-        affects ``S`` built with this type.
-
-        By default, raises NotImplementedError.
-
-        Override this to return the index this mapping type should
-        be indexed and searched in.
-
-        """
-        return settings.ES_INDEXES.get('default')
 
     @classmethod
     def get_es(cls, **overrides):
@@ -342,142 +320,3 @@ class Indexable(BaseIndexable):
         """
         model = cls.get_model()
         return model.objects.order_by('id').values_list('id', flat=True)
-
-
-class ElasticSearchBuilder(object):
-    @classmethod
-    def delete_indexes(cls, *indexes):
-        es = get_es()
-        log.info('Deleting all indexes')
-        indexes = [index for name, index in settings.ES_ALIAS_MAP.items()]
-        for index in indexes:
-            try:
-                es.delete_index(index)
-            except ElasticHttpNotFoundError:
-                log.warn("Could not find %s for deletion" % (index,))
-
-    @classmethod
-    def create_indexes(cls, settings_=None, make_aliases=True):
-        if not index_names:
-            log.info('No index specified using ES_ALIAS_MAP')
-            indexes = settings.ES_ALIAS_MAP
-        else:
-            indexes = {name: settings.ES_INDEXES[name] for name in index_names}
-
-        log.info('Creating indexes...')
-        for name, index in indexes.items():
-            log.info('    - %s' % (index,))
-            cls.create_index(index, settings_=settings_, make_alias=make_aliases, name=name)
-
-    @classmethod
-    def create_index(cls, index_name, settings_=None, make_alias=False, name=None):
-        settings_ = settings_ or settings.ES_SETTINGS
-
-        es = get_es()
-        es.create_index(index_name, settings_)
-        if make_alias:
-            cls.make_alias(index_name, settings.ES_INDEXES[name])
-
-    @classmethod
-    def create_mapping(cls, mapping_type, mapping=None, index=None):
-        es = get_es()
-        if not mapping:
-            log.info("No mapping specified - Using default mapping for object")
-            mapping = mapping_type.get_mapping()
-
-        if not index:
-            index = mapping_type.get_index()
-
-        mapping_name = mapping_type.get_mapping_type_name()
-
-        log.info('Mapping %s onto index %s' % (mapping_name, index))
-        es.put_mapping(index, mapping_name, mapping)
-
-    @classmethod
-    def update_doctypes(cls, delay=False, *doctypes):
-        update_all = False
-        if not doctypes:
-            update_all = True
-
-        for app in settings.INSTALLED_APPS:
-            mod = importlib.import_module(app)
-
-            try:
-                search_index_module = importlib.import_module("%s.search" % app)
-            except ImportError:
-                if module_has_submodule(mod, 'search'):
-                    raise
-
-                continue
-            for item_name, item in inspect.getmembers(search_index_module, inspect.isclass):
-                if item and issubclass(item, (Indexable,)) and issubclass(item, (MappingType,)):
-                    if update_all or item.get_mapping_type_name in doctypes:
-                        cls.update_doctype(item, delay=delay)
-
-    @classmethod
-    def reindex(cls, doctype, delay=False, *index):
-        if not index:
-            index = doctype.get_index()
-        cls.update(doctype, delay=delay)
-
-    @classmethod
-    def make_alias(cls, index, alias):
-        es = get_es()
-        es.update_aliases({
-            "actions": [
-                {
-                    "add": {
-                        "index": index,
-                        "alias": alias
-                    }
-                }
-            ]
-        })
-
-    @classmethod
-    def move_alias(cls, index_from, index_to, alias):
-        es = get_es()
-        es.update_aliases({
-            "actions": [
-                {
-                    "remove": {
-                        "index": index_from,
-                        "alias": alias
-                    }
-                },
-                {
-                    "add": {
-                        "index": index_to,
-                        "alias": alias
-                    }
-                }
-            ]
-        })
-
-    @classmethod
-    def migrate(cls, mapping_type, new_index_name, mapping=None):
-        alias = mapping_type.get_index()
-        name = None
-        for key, val in settings.ES_INDEXES.items():
-            if val is alias:
-                name = key
-        current_index = settings.ES_INDEXES[name]
-
-        # create new index
-        cls.create_index(new_index_name, settings_=None, make_alias=False)
-        # run an update on the newly created_index
-        mapping_type.override_index = new_index_name
-        cls.create_mapping(mapping_type, mapping=mapping, index=new_index_name)
-        cls.update(mapping_type)
-
-        # move alias
-        cls.move_alias(settings.ES_ALIAS_MAP[name], new_index_name, alias)
-
-    @classmethod
-    def update(cls, mapping_type, delay=False):
-        documents = [a for a in mapping_type.get_model().objects.all().values_list("id", flat=True)]
-        args = [mapping_type, documents]
-        if delay:
-            index_objects.delay(*args)
-        else:
-            index_objects(*args)
