@@ -1,4 +1,6 @@
 import inspect
+from optparse import make_option
+
 from django.core.management.base import BaseCommand
 from django.conf import settings
 from django.utils import importlib
@@ -11,8 +13,19 @@ from elasticutils.contrib.django import Indexable, MappingType
 class Command(BaseCommand):
 
     help = 'Creates index for elastic search'
+    base_options = (
+        make_option("-d", "--doctype", action="append", dest="doctype",
+            default=[],
+            help='Names of the doctypes to update'
+        ),
+    )
 
     def handle(self, *args, **options):
+        found = []
+        update_all = True
+        if options.get('indexes'):
+            update_all = False
+
         for app in settings.INSTALLED_APPS:
             mod = importlib.import_module(app)
 
@@ -25,5 +38,8 @@ class Command(BaseCommand):
                 continue
             for item_name, item in inspect.getmembers(search_index_module, inspect.isclass):
                 if item and issubclass(item, (Indexable,)) and issubclass(item, (MappingType,)):
+                    if update_all or item.
                     documents = [a for a in item.get_model().objects.all().values_list("id", flat=True)]
                     index_objects(item, documents)
+
+        set(found) - set(options.get('index'))

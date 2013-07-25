@@ -1896,6 +1896,11 @@ class Indexable(object):
 
     """
 
+    def __init__(self, *args, **kwags):
+        import pdb; pdb.set_trace()
+        super(Indexable, self).__init__(*args, **kwargs)
+        self.override_index = None
+
     @classmethod
     def get_es(cls):
         """Returns an ElasticSearch object
