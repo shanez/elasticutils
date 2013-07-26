@@ -13,7 +13,7 @@ class Command(BaseCommand):
     help = 'Creates index for elastic search'
 
     def handle(self, *args, **options):
-        es = get_es()
+        es = get_es(urls=settings.ES_URLS)
 
         es_settings = {}
         es_settings.update(settings.ES_SETTINGS)
