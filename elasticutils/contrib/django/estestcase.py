@@ -33,11 +33,11 @@ from elasticutils import get_es
 
 def testify(indexes):
     """Returns indexes with '_eutest' suffix.
-    
+
     :arg indexes: dict of mapping type name -> index name(s)
-    
+
     :returns: dict with ``_eutest`` appended to all index names
-    
+
     """
     ret = {}
     for k, v in indexes.items():
@@ -59,6 +59,8 @@ class ESTestCase(TestCase):
 
     """
     skip_tests = False
+    mapping = {}
+    data = []
 
     @classmethod
     def setUpClass(cls):
@@ -102,6 +104,20 @@ class ESTestCase(TestCase):
             return skip_this_test()
         super(ESTestCase, self).setUp()
 
+        # This is here in case the previous test run failed and didn't
+        # clean up after itself.
+        for index in settings.ES_INDEXES.values():
+            try:
+                ESTestCase.get_es().delete_index(index)
+            except ElasticHttpNotFoundError:
+                pass
+
+        indexes = settings.ES_INDEXES
+        settings_ = settings.ES_SETTINGS
+        settings_.update({'mappings': self.__class__.mapping})
+
+        ESTestCase.create_index(indexes.get('default'), settings=settings_)
+
     @classmethod
     def tearDownClass(cls):
         """Tears down environment
@@ -142,7 +158,7 @@ class ESTestCase(TestCase):
         """
         settings = settings or {}
 
-        cls.get_es().create_index(index, **settings)
+        cls.get_es().create_index(index, settings)
 
     @classmethod
     def index_data(cls, documents, index, doctype, id_field='id'):
