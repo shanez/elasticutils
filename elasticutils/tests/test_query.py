@@ -505,7 +505,27 @@ class QueryTest(ESTestCase):
             })
 
     def test_execute(self):
-        assert isinstance(self.get_s().execute(), SearchResults)
+        s = self.get_s()
+        results = s.execute()
+        assert isinstance(results, SearchResults)
+
+        cached = s.execute()
+        assert cached is results
+
+        # Test caching of empty results
+        try:
+            self.teardown_class()
+            self.create_index(settings={'mappings': self.mapping})
+            self.refresh()
+
+            s = self.get_s()
+            results = s.execute()
+            assert isinstance(results, SearchResults)
+
+            cached = s.execute()
+            assert cached is results
+        finally:
+            self.setup_class()
 
     def test_count(self):
         s = self.get_s()
@@ -1101,6 +1121,61 @@ class FacetTest(ESTestCase):
                 }
             }
         )
+
+    def test_filter_facet(self):
+        """Test filter facet"""
+        FacetTest.create_index()
+        FacetTest.index_data([
+            {'id': 1, 'color': 'red'},
+            {'id': 2, 'color': 'red'},
+            {'id': 3, 'color': 'red'},
+            {'id': 4, 'color': 'yellow'},
+            {'id': 5, 'color': 'yellow'},
+            {'id': 6, 'color': 'green'},
+            {'id': 7, 'color': 'blue'},
+            {'id': 8, 'color': 'white'},
+            {'id': 9, 'color': 'brown'},
+        ])
+        FacetTest.refresh()
+
+        red_or_yellow_filter = {
+            'filter': {
+                'or': [
+                    {'term': {'color': 'red'}},
+                    {'term': {'color': 'yellow'}},
+                ]
+            }
+        }
+        qs = (self.get_s().facet_raw(red_or_yellow=red_or_yellow_filter))
+
+        data = qs.facet_counts()
+        eq_(data, {'red_or_yellow': {u'_type': 'filter', u'count': 5}})
+
+    def test_query_facet(self):
+        """Test query facet"""
+        FacetTest.create_index()
+        FacetTest.index_data([
+            {'id': 1, 'color': 'red'},
+            {'id': 2, 'color': 'red'},
+            {'id': 3, 'color': 'red'},
+            {'id': 4, 'color': 'yellow'},
+            {'id': 5, 'color': 'yellow'},
+            {'id': 6, 'color': 'green'},
+            {'id': 7, 'color': 'blue'},
+            {'id': 8, 'color': 'white'},
+            {'id': 9, 'color': 'brown'},
+        ])
+        FacetTest.refresh()
+
+        red_query = {
+            'query': {
+                'term': {'color': 'red'},
+            }
+        }
+        qs = (self.get_s().facet_raw(red_query=red_query))
+
+        data = qs.facet_counts()
+        eq_(data, {'red_query': {u'_type': 'query', u'count': 3}})
 
     def test_invalid_field_type(self):
         """Invalid _type should raise InvalidFacetType."""

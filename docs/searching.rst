@@ -28,8 +28,8 @@ search.
 This creates an `untyped` :py:class:`elasticutils.S` using the
 defaults:
 
-* uses an :py:class:`pyelasticsearch.client.ElasticSearch` instance
-  configured to connect to ``http://localhost:9200`` -- call
+* uses an :py:class:`elasticsearch.client.Elasticsearch` instance
+  configured to connect to ``localhost`` -- call
   :py:meth:`elasticutils.S.es` to specify connection parameters
 * searches across all indexes -- call
   :py:meth:`elasticutils.S.indexes` to specify indexes
@@ -164,16 +164,15 @@ Specifying connection parameters: ``es``
 ----------------------------------------
 
 :py:class:`elasticutils.S` will generate an
-:py:class:`pyelasticsearch.client.ElasticSearch` object that connects
-to ``http://localhost:9200`` by default. That's usually not what
-you want. You can use the :py:meth:`elasticutils.S.es` method to
-specify the arguments used to create the pyelasticsearch ElasticSearch
-object.
+:py:class:`elasticsearch.client.Elasticsearch` object that connects
+to ``localhost`` by default. That's usually not what you want. You can use the
+:py:meth:`elasticutils.S.es` method to specify the arguments used to create the
+elasticsearch-py Elasticsearch object.
 
 Examples::
 
-    q = S().es(urls=['http://localhost:9200'])
-    q = S().es(urls=['http://localhost:9200'], timeout=10)
+    q = S().es(urls=['localhost'])
+    q = S().es(urls=['localhost:9200'], timeout=10)
 
 See :py:func:`elasticutils.get_es` for the list of arguments you
 can pass in.
@@ -874,6 +873,45 @@ For example::
    http://www.elasticsearch.org/guide/reference/modules/scripting.html
      Elasticsearch docs on scripting
 
+Filter and query facets
+-----------------------
+
+You can also define arbitrary facets for queries and facets as documented
+in Elasticsearch's docs.
+
+For example::
+
+    q = (S().query(title='taco trucks')
+            .facet_raw(korean_or_mexican={
+                'filter': {
+                    'or': [
+                        {'term': {'style': 'korean'}},
+                        {'term': {'style': 'mexican'}},
+                    ]
+                }
+            }))
+
+Then access the custom facet via the name you passed into ``facet_raw``::
+
+  counts = q.facet_counts()
+  korean_or_mexican_count = counts['korean_or_mexican']['count']
+
+The same can be done with queries::
+
+  q = (S().query(title='taco trucks')
+        .facet_raw(korean={
+            'query': {
+                'term': {'style': 'korean'},
+            }
+        }))
+
+.. seealso::
+
+  http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-facets-query-facet.html
+    Elasticsearch docs on query facets
+
+  http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-facets-filter-facet.html
+    Elasticsearch docs on filter facets
 
 .. _scores-and-explanations:
 

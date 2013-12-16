@@ -8,11 +8,11 @@ python:
     - "2.7"
 
 notifications:
-  email: false
+    email: false
 
 install:
     - virtualenv .
-    - ./bin/pip install -r requirements-dev.txt
+    - ./bin/pip install -r requirements/dev.txt
 
 script:
     - ./bin/python run_tests.py

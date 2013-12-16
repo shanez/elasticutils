@@ -3,7 +3,8 @@ import logging
 from datetime import datetime
 from operator import itemgetter
 
-from pyelasticsearch import ElasticSearch
+from elasticsearch import Elasticsearch
+from elasticsearch.helpers import bulk_index
 
 from elasticutils._version import __version__  # noqa
 
@@ -11,7 +12,8 @@ from elasticutils._version import __version__  # noqa
 log = logging.getLogger('elasticutils')
 
 
-DEFAULT_URLS = ['http://localhost:9200']
+# Note: Don't change these--they're not part of the API.
+DEFAULT_URLS = ['localhost']
 DEFAULT_DOCTYPES = None
 DEFAULT_INDEXES = None
 DEFAULT_TIMEOUT = 5
@@ -68,11 +70,11 @@ def _build_key(urls, timeout, **settings):
     # Order the settings by key and then turn it into a string with
     # repr. There are a lot of edge cases here, but the worst that
     # happens is that the key is different and so you get a new
-    # ElasticSearch. We'll probably have to tweak this.
+    # Elasticsearch. We'll probably have to tweak this.
     settings = sorted(settings.items(), key=lambda item: item[0])
     settings = repr([(k, v) for k, v in settings])
 
-    # pyelasticsearch allows urls to be a string, so we make sure to
+    # elasticsearch allows urls to be a string, so we make sure to
     # account for that when converting whatever it is into a tuple.
     if isinstance(urls, basestring):
         urls = (urls,)
@@ -89,41 +91,40 @@ _cached_elasticsearch = {}
 
 
 def get_es(urls=None, timeout=DEFAULT_TIMEOUT, force_new=False, **settings):
-    """Create a pyelasticsearch `ElasticSearch` object and return it.
+    """Create an elasticsearch `Elasticsearch` object and return it.
 
-    This will aggressively re-use `ElasticSearch` objects with the
+    This will aggressively re-use `Elasticsearch` objects with the
     following rules:
 
     1. if you pass the same argument values to `get_es()`, then it
-       will return the same `ElasticSearch` object
+       will return the same `Elasticsearch` object
     2. if you pass different argument values to `get_es()`, then it
-       will return different `ElasticSearch` object
-    3. it caches each `ElasticSearch` object that gets created
+       will return different `Elasticsearch` object
+    3. it caches each `Elasticsearch` object that gets created
     4. if you pass in `force_new=True`, then you are guaranteed to get
-       a fresh `ElasticSearch` object AND that object will not be
+       a fresh `Elasticsearch` object AND that object will not be
        cached
 
     :arg urls: list of uris; Elasticsearch hosts to connect to,
         defaults to ``['http://localhost:9200']``
     :arg timeout: int; the timeout in seconds, defaults to 5
-    :arg force_new: Forces get_es() to generate a new ElasticSearch
+    :arg force_new: Forces get_es() to generate a new Elasticsearch
         object rather than pulling it from cache.
-    :arg settings: other settings to pass into ElasticSearch
+    :arg settings: other settings to pass into Elasticsearch
         constructor; See
-        `<http://pyelasticsearch.readthedocs.org/en/latest/api/>`_ for
-        more details.
+        `<http://elasticsearch.readthedocs.org/>`_ for more details.
 
     Examples::
 
-        # Returns cached ElasticSearch object
+        # Returns cached Elasticsearch object
         es = get_es()
 
-        # Returns a new ElasticSearch object
+        # Returns a new Elasticsearch object
         es = get_es(force_new=True)
 
-        es = get_es(urls=['http://localhost:9200'])
+        es = get_es(urls=['localhost'])
 
-        es = get_es(urls=['http://localhost:9200'], timeout=10,
+        es = get_es(urls=['localhost:9200'], timeout=10,
                     max_retries=3)
 
     """
@@ -139,7 +140,7 @@ def get_es(urls=None, timeout=DEFAULT_TIMEOUT, force_new=False, **settings):
         if key in _cached_elasticsearch:
             return _cached_elasticsearch[key]
 
-    es = ElasticSearch(urls, timeout=timeout, **settings)
+    es = Elasticsearch(urls, timeout=timeout, **settings)
 
     if not force_new:
         # We don't need to rebuild the key here since we built it in
@@ -179,6 +180,33 @@ def _process_facets(facets, flags):
 
         rv[fieldname] = facet_type
     return rv
+
+
+def _facet_counts(items):
+    """Returns facet counts as dict.
+
+    Given the `items()` on the raw dictionary from Elasticsearch this processes
+    it and returns the counts keyed on the facet name provided in the original
+    query.
+
+    """
+    facets = {}
+    for key, val in items:
+        if val['_type'] == 'terms':
+            facets[key] = [v for v in val['terms']]
+        elif val['_type'] == 'range':
+            facets[key] = [v for v in val['ranges']]
+        elif val['_type'] == 'histogram':
+            facets[key] = [v for v in val['entries']]
+        elif val['_type'] == 'date_histogram':
+            facets[key] = [v for v in val['entries']]
+        elif val['_type'] in ('filter', 'query', 'statistical'):
+            facets[key] = val
+        else:
+            raise InvalidFacetType(
+                'Facet _type "%s". key "%s" val "%r"' %
+                (val['_type'], key, val))
+    return facets
 
 
 class F(object):
@@ -360,12 +388,13 @@ class PythonMixin(object):
         """
         if isinstance(obj, basestring):
             if len(obj) == 19:
-                # Note: ES seems to support other date/datetime
-                # formats, but I wasn't able to create a situation
-                # where it returns something in a different shape in
-                # the results.
                 try:
                     return datetime.strptime(obj, '%Y-%m-%dT%H:%M:%S')
+                except (TypeError, ValueError):
+                    pass
+            elif len(obj) == 10:
+                try:
+                    return datetime.strptime(obj, '%Y-%m-%d')
                 except (TypeError, ValueError):
                     pass
 
@@ -486,13 +515,13 @@ class S(PythonMixin):
         return new
 
     def es(self, **settings):
-        """Return a new S with specified ElasticSearch settings.
+        """Return a new S with specified Elasticsearch settings.
 
-        This allows you to configure the ElasticSearch object that gets
+        This allows you to configure the Elasticsearch object that gets
         used to execute the search.
 
         :arg settings: the settings you'd use to build the
-            ElasticSearch---same as what you'd pass to
+            Elasticsearch---same as what you'd pass to
             :py:func:`get_es`.
 
         """
@@ -1249,7 +1278,7 @@ class S(PythonMixin):
         Perform the search, then convert that raw format into a
         SearchResults instance and return it.
         """
-        if not self._results_cache:
+        if self._results_cache is None:
             response = self.raw()
             ResultsClass = self.get_results_class()
             results = self.to_python(response.get('hits', {}).get('hits', []))
@@ -1258,16 +1287,16 @@ class S(PythonMixin):
         return self._results_cache
 
     def get_es(self, default_builder=get_es):
-        """Returns the ElasticSearch object to use.
+        """Returns the Elasticsearch object to use.
 
         :arg default_builder: The function that takes a bunch of
-            arguments and generates a pyelasticsearch ElasticSearch
+            arguments and generates a elasticsearch Elasticsearch
             object.
 
         .. Note::
 
            If you desire special behavior regarding building the
-           ElasticSearch object for this S, subclass S and override
+           Elasticsearch object for this S, subclass S and override
            this method.
 
         """
@@ -1278,7 +1307,7 @@ class S(PythonMixin):
             if action == 'es':
                 args.update(**value)
 
-        # TODO: store the ElasticSearch on the S if we've already
+        # TODO: store the Elasticsearch on the S if we've already
         # created one since we don't need to do it multiple times.
         return default_builder(**args)
 
@@ -1322,7 +1351,7 @@ class S(PythonMixin):
             raise BadSearch(
                 'You must specify an index if you are specifying doctypes.')
 
-        hits = es.search(qs,
+        hits = es.search(body=qs,
                          index=self.get_indexes(),
                          doc_type=self.get_doctypes())
 
@@ -1440,23 +1469,7 @@ class S(PythonMixin):
         >>> facet_counts = s.facet_counts()
 
         """
-        facets = {}
-        for key, val in self._raw_facets().items():
-            if val['_type'] == 'terms':
-                facets[key] = [v for v in val['terms']]
-            elif val['_type'] == 'range':
-                facets[key] = [v for v in val['ranges']]
-            elif val['_type'] == 'histogram':
-                facets[key] = [v for v in val['entries']]
-            elif val['_type'] == 'date_histogram':
-                facets[key] = [v for v in val['entries']]
-            elif val['_type'] == 'statistical':
-                facets[key] = val
-            else:
-                raise InvalidFacetType(
-                    'Facet _type "%s". key "%s" val "%r"' %
-                    (val['_type'], key, val))
-        return facets
+        return _facet_counts(self._raw_facets().items())
 
     def to_queryset(self):
         """
@@ -1501,7 +1514,7 @@ class MLT(PythonMixin):
             listed in s.get_indexes().
         :arg doctype: The doctype to use. Falls back to the first
             doctype listed in s.get_doctypes().
-        :arg es: The `ElasticSearch` object to use. If you don't
+        :arg es: The `Elasticsearch` object to use. If you don't
             provide one, then it will create one for you.
         :arg query_params: Any additional query parameters for the
             more like this call.
@@ -1548,12 +1561,12 @@ class MLT(PythonMixin):
         return len(self._do_search())
 
     def get_es(self):
-        """Returns an `ElasticSearch`.
+        """Returns an `Elasticsearch`.
 
-        * If there's an s, then it returns that `ElasticSearch`.
+        * If there's an s, then it returns that `Elasticsearch`.
         * If the es was provided in the constructor, then it returns
-          that `ElasticSearch`.
-        * Otherwise, it creates a new `ElasticSearch` and returns
+          that `Elasticsearch`.
+        * Otherwise, it creates a new `Elasticsearch` and returns
           that.
 
         Override this if that behavior isn't correct for you.
@@ -1566,7 +1579,7 @@ class MLT(PythonMixin):
 
     def raw(self):
         """
-        Build query and passes to `ElasticSearch`, then returns the raw
+        Build query and passes to `Elasticsearch`, then returns the raw
         format returned.
         """
         es = self.get_es()
@@ -1576,8 +1589,9 @@ class MLT(PythonMixin):
 
         body = self.s._build_query() if self.s else ''
 
-        hits = es.more_like_this(
-            self.index, self.doctype, self.id, mlt_fields, body, **params)
+        hits = es.mlt(
+            index=self.index, doc_type=self.doctype, id=self.id,
+            mlt_fields=mlt_fields, body=body, **params)
 
         log.debug(hits)
 
@@ -1588,7 +1602,7 @@ class MLT(PythonMixin):
         Perform the mlt call, then convert that raw format into a
         SearchResults instance and return it.
         """
-        if not self._results_cache:
+        if self._results_cache is None:
             response = self.raw()
             results = self.to_python(response.get('hits', {}).get('hits', []))
             self._results_cache = DictSearchResults(
@@ -1632,6 +1646,7 @@ class SearchResults(object):
         self.response = response
         self.took = response.get('took', 0)
         self.count = response.get('hits', {}).get('total', 0)
+        self.facets = _facet_counts(response.get('facets', {}).items())
         self.results = results
         self.fields = fields
 
@@ -1898,11 +1913,11 @@ class Indexable(object):
 
     @classmethod
     def get_es(cls):
-        """Returns an ElasticSearch object
+        """Returns an Elasticsearch object
 
         Override this if you need special functionality.
 
-        :returns: a pyelasticsearch `ElasticSearch` instance
+        :returns: a elasticsearch `Elasticsearch` instance
 
         """
         return get_es()
@@ -1963,7 +1978,7 @@ class Indexable(object):
         raise NotImplemented
 
     @classmethod
-    def index(cls, document, id_=None, force_insert=False, es=None,
+    def index(cls, document, id_=None, overwrite_existing=True, es=None,
               index=None):
         """Adds or updates a document to the index
 
@@ -1982,10 +1997,11 @@ class Indexable(object):
                will make up an id for your document and it'll look
                like a character name from a Lovecraft novel.
 
-        :arg force_insert: TODO
+        :arg overwrite_existing: if ``True`` overwrites existing documents
+             of the same ID and doctype
 
-        :arg es: The `ElasticSearch` to use. If you don't specify an
-            `ElasticSearch`, it'll use `cls.get_es()`.
+        :arg es: The `Elasticsearch` to use. If you don't specify an
+            `Elasticsearch`, it'll use `cls.get_es()`.
 
         :arg index: The name of the index to use. If you don't specify one
             it'll use `cls.get_index()`.
@@ -2003,12 +2019,11 @@ class Indexable(object):
         if index is None:
             index = cls.get_index()
 
-        es.index(
-            index,
-            cls.get_mapping_type_name(),
-            document,
-            id=id_,
-            force_insert=force_insert)
+        kw = {}
+        if not overwrite_existing:
+            kw['op_type'] = 'create'
+        es.index(index=index, doc_type=cls.get_mapping_type_name(),
+                 body=document, id=id_, **kw)
 
     @classmethod
     def bulk_index(cls, documents, id_field='id', es=None, index=None):
@@ -2024,8 +2039,8 @@ class Indexable(object):
         :arg id_field: The name of the field to use as the document
             id. This defaults to 'id'.
 
-        :arg es: The `ElasticSearch` to use. If you don't specify an
-            `ElasticSearch`, it'll use `cls.get_es()`.
+        :arg es: The `Elasticsearch` to use. If you don't specify an
+            `Elasticsearch`, it'll use `cls.get_es()`.
 
         :arg index: The name of the index to use. If you don't specify one
             it'll use `cls.get_index()`.
@@ -2043,10 +2058,15 @@ class Indexable(object):
         if index is None:
             index = cls.get_index()
 
-        es.bulk_index(index,
-                      cls.get_mapping_type_name(),
-                      documents,
-                      id_field)
+        documents = (dict(d, _id=d[id_field]) for d in documents)
+
+        bulk_index(
+            es,
+            documents,
+            index=index,
+            doc_type=cls.get_mapping_type_name(),
+            raise_on_error=True
+        )
 
     @classmethod
     def unindex(cls, id_, es=None, index=None):
@@ -2055,8 +2075,8 @@ class Indexable(object):
         :arg id_: The Elasticsearch id for the document to remove from
             the index.
 
-        :arg es: The `ElasticSearch` to use. If you don't specify an
-            `ElasticSearch`, it'll use `cls.get_es()`.
+        :arg es: The `Elasticsearch` to use. If you don't specify an
+            `Elasticsearch`, it'll use `cls.get_es()`.
 
         :arg index: The name of the index to use. If you don't specify one
             it'll use `cls.get_index()`.
@@ -2068,7 +2088,7 @@ class Indexable(object):
         if index is None:
             index = cls.get_index()
 
-        es.delete(index, cls.get_mapping_type_name(), id_)
+        es.delete(index=index, doc_type=cls.get_mapping_type_name(), id=id_)
 
     @classmethod
     def refresh_index(cls, es=None, index=None):
@@ -2080,8 +2100,8 @@ class Indexable(object):
         `refresh_index` as soon as you're done indexing. This is
         particularly helpful for unit tests.
 
-        :arg es: The `ElasticSearch` to use. If you don't specify an
-            `ElasticSearch`, it'll use `cls.get_es()`.
+        :arg es: The `Elasticsearch` to use. If you don't specify an
+            `Elasticsearch`, it'll use `cls.get_es()`.
 
         :arg index: The name of the index to use. If you don't specify one
             it'll use `cls.get_index()`.
@@ -2093,4 +2113,4 @@ class Indexable(object):
         if index is None:
             index = cls.get_index()
 
-        es.refresh(index)
+        es.indices.refresh(index=index)

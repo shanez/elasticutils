@@ -6,10 +6,105 @@ What's new in ElasticUtils
    :local:
 
 
-Version 0.8: In development
+Version 0.9: In development
 ===========================
 
+.. Note::
+
+   This is a *big* change. We switched from pyelasticsearch to
+   elasticsearch-py. The Elasticsearch object you get back from
+   ``get_es`` is pretty different. When you upgrade to v0.9, you'll
+   probably need to rewrite code.
+
+   If this terrifies you, read through these notes carefully and/or
+   stay with v0.8.
+
+
 **API-breaking changes:**
+
+* **elasticsearch-py v0.4.3 or later now required.**
+
+  ElasticUtils now uses elasticsearch-py.
+
+* **pyelasticsearch no longer needed**
+
+  You can remove pyelasticsearch and its requirements.
+
+* **thrift now supported!**
+
+  elasticsearch-py supports http, thrift and memcache protocols, so
+  you can use any of them now.
+
+* **pyelasticsearch -> elasticsearch-py changes.**
+
+  If you called ``.get_es()`` and got a pyelasticsearch `ElasticSearch`
+  object and did things with that (create index, create mappings, delete
+  indexes, indexing, cluster health, ...), you're going to need to make
+  some changes.
+
+  You can either:
+
+  1. rewrite that code to use elasticsearch-py `Elasticsearch`
+     equivalents, or
+
+  2. write and use your own ``get_es()`` function that returns
+     a pyelasticsearch `ElasticSearch` object
+
+  Rewriting shouldn't be too hard. The `elasticsearcy-py documentation
+  <https://elasticsearch-py.readthedocs.org/en/latest/>`_ is pretty good
+  and for most things, there's a 1-to-1 translation. Also, in many cases
+  it's cleaner, so you'll probably be removing code.
+
+
+**Changes:**
+
+
+Version 0.8.1: September 13th, 2013
+===================================
+
+**API-breaking changes:**
+
+* **Indexable.index overwrite_existing argument default changed**
+
+  In v0.8, we added the ``overwrite_existing`` argument, but made
+  it default to False. That's different than what pyelasticsearch
+  does.
+
+  In v0.8.1, we changed the default to True which is in line with
+  what pyelasticsearch does.
+
+  If you were depending on the old behavior, then you need to
+  update your indexing code to set ``overwrite_existing=False``.
+
+
+Version 0.8: August 19th, 2013
+==============================
+
+**API-breaking changes:**
+
+* **pyelasticsearch v0.6 or later now required.**
+
+  Further, since pyelasticsearch has released versions that aren't
+  backwards compatible, we're now pegging on specific versions.
+
+* **celery 2.5.5 or later now required.**
+
+  You can ignore this if you're not using the Django celery tasks.
+
+* **Indexable.index arguments changed**
+
+  pyelasticsearch changed arguments, so we did, too. We dropped
+  the ``force_insert`` argument (which wasn't working) and picked
+  up ``overwrite_existing``.
+
+  ``overwrite_existing`` defaults to False which means it will
+  **not** overwrite existing documents in the index.
+
+  .. Note::
+
+     This was a mistake since pyelasticsearch defaults to True.
+     We changed this in 0.8.1.
+
 
 **Changes:**
 
@@ -17,11 +112,13 @@ Version 0.8: In development
 
   ``range`` is a nice shorthand for ``gte`` and ``lte``.
 
-* **S.query_raw added**
+* **S.filter_raw added**
 
   If :py:meth:`elasticutils.S.filter` isn't doing as it's told, then you
   can skip it and use the Elasticsearch API to create the filter clause
   of the search by hand with :py:meth:`elasticutils.S.filter_raw`.
+
+* Moved requirements files to ``requirements/``.
 
 
 Version 0.7: Released June 12th, 2013
