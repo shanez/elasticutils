@@ -23,16 +23,16 @@ class Command(BaseCommand):
             mod = importlib.import_module(app)
 
             try:
-                search_index_module = importlib.import_module("%s.search" % app)
+                search_index_module = importlib.import_module("%s.mappings" % app)
             except ImportError:
-                if module_has_submodule(mod, 'search'):
+                if module_has_submodule(mod, 'mappings'):
                     raise
 
                 continue
             for item_name, item in inspect.getmembers(search_index_module, inspect.isclass):
-                if item and issubclass(item, (Indexable,)) and issubclass(item, (MappingType,)):
+                if item and issubclass(item, (Indexable,)) and issubclass(item, (MappingType,)) and item.model and item.mapping_type_name:
                     mappings.update({item.get_mapping_type_name(): item.get_mapping()})
 
             es_settings.update({"mappings": mappings})
 
-        es.create_index(settings.ES_INDEXES.get('default'), es_settings)
+        es.indices.create(settings.ES_INDEXES.get('default'), body=es_settings)
