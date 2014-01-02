@@ -97,7 +97,12 @@ class ESTestCase(TestCase):
         """Skips the test if this class is skipping tests."""
         if self.skip_tests:
             return skip_this_test()
+        ESTestCase.setUpClass()
         super(ESTestCase, self).setUp()
+
+    def tearDown(self):
+        ESTestCase.tearDownClass()
+        super(ESTestCase, self).tearDown()
 
     @classmethod
     def tearDownClass(cls):
